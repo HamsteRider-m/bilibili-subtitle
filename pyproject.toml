@@ -1,0 +1,36 @@
+[project]
+name = "bilibili-subtitle"
+version = "0.1.0"
+description = "Extract Bilibili subtitles or transcribe audio to generate transcripts."
+requires-python = ">=3.11"
+dependencies = [
+  "yt-dlp>=2025.1.15",
+]
+
+[project.optional-dependencies]
+claude = [
+  "anthropic>=0.45.0",
+  "claude-agent-sdk>=0.1.0",
+]
+transcribe = [
+  "openai>=1.0.0",
+]
+dev = [
+  "jsonschema>=4.20.0",
+  "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["bilibili_subtitle*"]
+exclude = ["plans*", "tests*"]

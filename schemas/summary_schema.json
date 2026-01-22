@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Bilibili Subtitle Summary Schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["key_points", "outline", "entities", "timestamps"],
+  "properties": {
+    "key_points": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "outline": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "start_ms", "end_ms"],
+        "properties": {
+          "title": { "type": "string" },
+          "start_ms": { "type": "integer", "minimum": 0 },
+          "end_ms": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "entities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "type"],
+        "properties": {
+          "name": { "type": "string" },
+          "type": { "type": "string" },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "timestamps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["start_ms", "end_ms", "segment_indices"],
+        "properties": {
+          "start_ms": { "type": "integer", "minimum": 0 },
+          "end_ms": { "type": "integer", "minimum": 0 },
+          "segment_indices": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 0 }
+          },
+          "note": { "type": "string" }
+        }
+      }
+    }
+  }
+}
+
