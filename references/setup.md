@@ -4,8 +4,15 @@
 
 - **BBDown**: Download from https://github.com/nilaoda/BBDown/releases
 - **ffmpeg**: Required for audio transcription path
-- **DASHSCOPE_API_KEY**: Required for audio transcription (Qwen ASR)
-- **ANTHROPIC_API_KEY**: Required for proofreading/translation/summarization
+
+## API Keys
+
+| Key | Provider | Purpose |
+|-----|----------|---------|
+| `DASHSCOPE_API_KEY` | [Aliyun DashScope](https://dashscope.console.aliyun.com/) | Audio transcription (Qwen ASR) |
+| `ANTHROPIC_API_KEY` | [Anthropic](https://console.anthropic.com/) | Proofreading/translation/summarization |
+
+**Note**: `DASHSCOPE_API_KEY` only required when video has no subtitles (ASR fallback path).
 
 ## Installation
 
