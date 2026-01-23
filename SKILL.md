@@ -1,47 +1,82 @@
 ---
-name: bilibili-subtitle-extraction
-description: Use when you need to extract Bilibili video subtitles (BV/av/URL), generate SRT/VTT/Markdown transcripts, and optionally proofread/translate/summarize with Claude.
+name: bilibili-subtitle
+description: Use when extracting subtitles from Bilibili videos, transcribing audio, or generating structured transcripts from video content.
 ---
 
 # Bilibili Subtitle Extraction
 
 ## Overview
 
-This skill extracts subtitles from Bilibili videos via `yt-dlp`. If no subtitles are available, it can fall back to audio transcription (requires `ffmpeg` and an ASR provider).
+Extract subtitles from Bilibili videos using BBDown. Supports AI-generated subtitles and falls back to audio transcription when no subtitles are available.
 
 ## Safety / Compliance
 
-- Do not bypass paywalls or DRM.
-- Only use user-provided authentication (`--cookies-*`) when required.
-- Avoid bulk scraping; handle rate limits responsibly.
+- Do not bypass paywalls or DRM
+- Only use user-provided cookies when required
+- Avoid bulk scraping; handle rate limits responsibly
+
+## Prerequisites
+
+- **BBDown**: Download from https://github.com/nilaoda/BBDown/releases
+- **ffmpeg**: Required for audio transcription path
+- **DASHSCOPE_API_KEY**: Required for audio transcription (Qwen ASR)
+- **ANTHROPIC_API_KEY**: Required for proofreading/translation/summarization
+
+## Authentication
+
+BBDown 使用内置 cookie 管理，首次使用需登录：
+
+```bash
+BBDown login
+```
+
+扫描二维码完成登录，cookie 保存在 `BBDown.data` 文件中。
 
 ## How to Run
 
-From this repo root:
-
 ```bash
-python -m bilibili_subtitle "<bilibili_url_or_bv_or_av>" --output-dir ./output --verbose
+python -m bilibili_subtitle "<URL>" [OPTIONS]
 ```
 
-Common options:
+### Options
 
-- `--cookies-from-browser chrome|firefox|safari`
-- `--cookies-file /path/to/cookies.txt`
-- `--skip-proofread` / `--skip-summary`
-- `--output-lang zh|en|zh+en`
-- `--cache-dir ./.cache`
+| Option | Description |
+|--------|-------------|
+| `--output-dir DIR` | Output directory (default: `./output`) |
+| `--output-lang LANG` | `zh` / `en` / `zh+en` (default: `zh`) |
+| `--skip-proofread` | Skip Claude proofreading |
+| `--skip-summary` | Skip summarization |
+| `--cache-dir DIR` | Cache directory (default: `./.cache`) |
+| `--verbose` | Show detection details |
 
 ## Outputs
 
-Writes to `--output-dir`:
+```
+output/
+├── {video_id}.zh.srt          # SRT 字幕
+├── {video_id}.zh.vtt          # VTT 字幕
+├── {video_id}.transcript.md   # Markdown 逐字稿
+├── {video_id}.summary.json    # 结构化摘要
+└── {video_id}.summary.md      # 摘要 (Markdown)
+```
 
-- `{video_id}.zh.srt`, `{video_id}.zh.vtt`
-- `{video_id}.transcript.md`
-- `{video_id}.summary.json`, `{video_id}.summary.md` (unless `--skip-summary`)
-- If `--output-lang zh+en`: `{video_id}.zh+en.srt` and bilingual transcript
+## Processing Flow
 
-## Notes
+```
+URL → BBDown 检测/下载 → [有字幕?]
+                          ├─ YES → 加载 SRT → 校对 → 输出
+                          └─ NO  → 下载音频 → ASR 转录 → 校对 → 输出
+```
 
-- Proofreading/translation/summarization require `ANTHROPIC_API_KEY`.
-- Audio transcription fallback currently uses OpenAI Whisper API and requires `OPENAI_API_KEY`.
+## Examples
 
+```bash
+# 基本用法
+python -m bilibili_subtitle "https://www.bilibili.com/video/BV1234567890/"
+
+# 跳过校对和摘要（快速提取）
+python -m bilibili_subtitle "BV1234567890" --skip-proofread --skip-summary
+
+# 双语输出
+python -m bilibili_subtitle "BV1234567890" --output-lang zh+en
+```

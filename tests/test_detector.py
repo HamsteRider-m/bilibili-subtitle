@@ -1,24 +1,23 @@
-from bilibili_subtitle.detector import collect_subtitle_tracks, select_best_track
+from bilibili_subtitle.bbdown_client import SubtitleInfo, VideoInfo
 
 
-def test_select_best_track_prefers_ai_zh() -> None:
-    info = {
-        "subtitles": {
-            "zh": [{"ext": "srt", "url": "https://example/zh.srt"}],
-        },
-        "automatic_captions": {
-            "ai-zh": [{"ext": "json", "url": "https://example/ai-zh.json"}],
-        },
-    }
-    tracks = collect_subtitle_tracks(info)
-    best = select_best_track(tracks)
-    assert best is not None
-    assert best.lang == "ai-zh"
+def test_video_info_with_subtitle() -> None:
+    info = VideoInfo(
+        video_id="BV1234567890",
+        title="Test Video",
+        subtitle_info=SubtitleInfo(has_subtitle=True, has_ai_subtitle=True, languages=["zh"]),
+        subtitle_files=[],
+    )
+    assert info.subtitle_info.has_subtitle is True
+    assert info.subtitle_info.has_ai_subtitle is True
 
 
-def test_select_best_track_fallback_any() -> None:
-    info = {"subtitles": {"en": [{"ext": "vtt", "url": "https://example/en.vtt"}]}}
-    best = select_best_track(collect_subtitle_tracks(info))
-    assert best is not None
-    assert best.lang == "en"
-
+def test_video_info_without_subtitle() -> None:
+    info = VideoInfo(
+        video_id="BV1234567890",
+        title="Test Video",
+        subtitle_info=SubtitleInfo(has_subtitle=False, has_ai_subtitle=False, languages=[]),
+        subtitle_files=[],
+    )
+    assert info.subtitle_info.has_subtitle is False
+    assert info.subtitle_info.has_ai_subtitle is False
