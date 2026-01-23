@@ -1,38 +1,17 @@
 ---
 name: bilibili-subtitle
-description: Use when extracting subtitles from Bilibili videos, transcribing audio, or generating structured transcripts from video content.
+description: Use when extracting subtitles from Bilibili videos, transcribing videos without subtitles, or generating structured summaries from video content. Triggers on Bilibili URLs (bilibili.com), BV IDs (BV1xxx), or requests to "extract subtitles from Bilibili".
 ---
 
 # Bilibili Subtitle Extraction
 
-## Overview
+Extract subtitles from Bilibili videos. Supports AI subtitles and falls back to ASR when unavailable.
 
-Extract subtitles from Bilibili videos using BBDown. Supports AI-generated subtitles and falls back to audio transcription when no subtitles are available.
+## Setup
 
-## Safety / Compliance
+See [references/setup.md](references/setup.md) for prerequisites and authentication.
 
-- Do not bypass paywalls or DRM
-- Only use user-provided cookies when required
-- Avoid bulk scraping; handle rate limits responsibly
-
-## Prerequisites
-
-- **BBDown**: Download from https://github.com/nilaoda/BBDown/releases
-- **ffmpeg**: Required for audio transcription path
-- **DASHSCOPE_API_KEY**: Required for audio transcription (Qwen ASR)
-- **ANTHROPIC_API_KEY**: Required for proofreading/translation/summarization
-
-## Authentication
-
-BBDown 使用内置 cookie 管理，首次使用需登录：
-
-```bash
-BBDown login
-```
-
-扫描二维码完成登录，cookie 保存在 `BBDown.data` 文件中。
-
-## How to Run
+## Quick Start
 
 ```bash
 python -m bilibili_subtitle "<URL>" [OPTIONS]
