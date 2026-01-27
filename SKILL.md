@@ -12,10 +12,10 @@ user-invocable: true
 
 | 任务 | 命令 |
 |------|------|
-| 基本提取 | `python -m bilibili_subtitle "BV1234567890"` |
-| 快速模式 | `python -m bilibili_subtitle "URL" --skip-proofread --skip-summary` |
-| 双语输出 | `python -m bilibili_subtitle "URL" --output-lang zh+en` |
-| 指定目录 | `python -m bilibili_subtitle "URL" -o ./subtitles` |
+| 基本提取 | `pixi run python -m bilibili_subtitle "BV1234567890"` |
+| 快速模式 | `pixi run python -m bilibili_subtitle "URL" --skip-proofread --skip-summary` |
+| 双语输出 | `pixi run python -m bilibili_subtitle "URL" --output-lang zh+en` |
+| 指定目录 | `pixi run python -m bilibili_subtitle "URL" -o ./subtitles` |
 
 ## 前置条件
 
@@ -24,7 +24,7 @@ user-invocable: true
 ```bash
 cd ~/.agents/skills/bilibili-subtitle
 ./install.sh
-source .venv/bin/activate
+pixi shell
 ```
 
 ### 2. 外部工具
@@ -138,19 +138,19 @@ URL → BBDown 检测 → [有字幕?]
 ### 基本用法
 
 ```bash
-python -m bilibili_subtitle "https://www.bilibili.com/video/BV1234567890/"
+pixi run python -m bilibili_subtitle "https://www.bilibili.com/video/BV1234567890/"
 ```
 
 ### 快速提取（跳过 AI 处理）
 
 ```bash
-python -m bilibili_subtitle "BV1234567890" --skip-proofread --skip-summary -v
+pixi run python -m bilibili_subtitle "BV1234567890" --skip-proofread --skip-summary -v
 ```
 
 ### 双语输出
 
 ```bash
-python -m bilibili_subtitle "BV1234567890" --output-lang zh+en
+pixi run python -m bilibili_subtitle "BV1234567890" --output-lang zh+en
 ```
 
 ---

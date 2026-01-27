@@ -1,6 +1,9 @@
 .venv/
+.pixi/
+pixi.lock
 .cache/
 output/
 **/__pycache__/
 .pytest_cache/
 *.pyc
+*.egg-info/
