@@ -9,5 +9,6 @@ def test_cli_help_runs() -> None:
         text=True,
         check=True,
     )
-    assert "bilibili-subtitle" in (proc.stdout + proc.stderr)
-
+    output = proc.stdout + proc.stderr
+    assert "usage: bilibili_subtitle" in output
+    assert "Extract subtitles from Bilibili videos" in output

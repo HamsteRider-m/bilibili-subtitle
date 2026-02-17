@@ -161,6 +161,13 @@ echo -e "${GREEN}  BBDown login${NC}"
 echo "扫描二维码完成登录，Cookie 保存在 BBDown.data"
 echo ""
 
+echo -e "${BLUE}🧪 安装后自检${NC}"
+echo ""
+echo "建议运行："
+echo -e "${GREEN}  pixi run python -m bilibili_subtitle --help${NC}"
+echo -e "${GREEN}  pixi run python -m bilibili_subtitle \"BV1xx411c7mD\" --skip-proofread --skip-summary -o ./output${NC}"
+echo ""
+
 # 最终检查
 echo ""
 echo -e "${BLUE}========================================${NC}"

@@ -17,22 +17,32 @@ user-invocable: true
 | 双语输出 | `pixi run python -m bilibili_subtitle "URL" --output-lang zh+en` |
 | 指定目录 | `pixi run python -m bilibili_subtitle "URL" -o ./subtitles` |
 
+## 角色定位（可独立运行，也可做子 Skill）
+
+- 独立使用：直接 `pixi run python -m bilibili_subtitle ...`
+- 子 Skill 使用：由主编排器（例如 `anything-to-notebooklm`）调用
+- 对外契约：输入 B 站 URL/BV，输出 `{video_id}.transcript.md` 等文件
+
 ## 前置条件
 
 ### 1. 安装
 
 ```bash
+# Claude Code
+cd ~/.claude/skills/bilibili-subtitle
+./install.sh
+
+# Codex/Agents（如使用该目录）
 cd ~/.agents/skills/bilibili-subtitle
 ./install.sh
-pixi shell
 ```
 
 ### 2. 外部工具
 
 | 工具 | 用途 | 安装 |
 |------|------|------|
-| BBDown | 视频信息/字幕下载 | `brew install bbdown` |
-| ffmpeg | 音频转换 | `brew install ffmpeg` |
+| BBDown | 视频信息/字幕下载 | `./install.sh` 自动检查/安装 |
+| ffmpeg | 音频转换 | `pixi` 环境内提供 |
 
 ### 3. API Keys
 
@@ -51,6 +61,13 @@ export DASHSCOPE_API_KEY="your-key"  # 可选
 
 ```bash
 BBDown login  # 扫码登录，Cookie 保存在 BBDown.data
+```
+
+### 5. 安装后自检
+
+```bash
+pixi run python -m bilibili_subtitle --help
+pixi run python -m bilibili_subtitle "BV1xx411c7mD" --skip-proofread --skip-summary -o ./output
 ```
 
 ## 触发方式
@@ -91,32 +108,25 @@ URL → BBDown 检测 → [有字幕?]
                      └─ NO  → 下载音频 → ASR 转录 → 校对 → 输出
 ```
 
-## Progress Updates
+## 作为子 Skill 的调用契约
 
+父 Skill 推荐执行：
+
+```bash
+pixi run python -m bilibili_subtitle "<URL或BV>" -o /tmp --skip-summary
 ```
-⏳ 检测视频字幕: BV1234567890
-✅ 视频ID: BV1234567890
-   标题: 视频标题
-   有字幕: True
-⏳ 加载字幕文件...
-✅ 加载 120 个字幕段落
-⏳ 校对字幕...
-✅ 校对完成，修改 5 处
-⏳ 生成输出文件...
-✅ SRT: output/BV1234567890.zh.srt
-✅ VTT: output/BV1234567890.zh.vtt
-✅ MD:  output/BV1234567890.transcript.md
-⏳ 生成摘要...
-✅ Summary JSON: output/BV1234567890.summary.json
-✅ Done! 输出目录: ./output
-```
+
+成功判定：
+
+- 退出码为 `0`
+- 输出目录存在 `*.transcript.md`
 
 ## 错误处理
 
 ### 1. BBDown 未安装
 - **错误**: `command not found: BBDown`
 - **原因**: BBDown 未安装或不在 PATH 中
-- **解决**: `brew install bbdown` 或从 GitHub 下载
+- **解决**: 重新运行 `./install.sh` 或手动安装 BBDown
 
 ### 2. BBDown 认证失败
 - **错误**: `需要登录` 或下载失败
