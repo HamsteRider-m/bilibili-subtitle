@@ -14,17 +14,14 @@ import json
 import sys
 from pathlib import Path
 
-from .contract import ExitCode, ExecutionResult, SubtitleOutput, parse_execution_result
+from .contract import ExitCode, ExecutionResult, SubtitleOutput
 from .errors import (
     ASRConfigError,
-    AnthropicConfigError,
     BBDownAuthError,
     BBDownDownloadError,
-    BBDownNotFoundError,
     FFmpegNotFoundError,
     InvalidURLError,
     NoSubtitleError,
-    OutputWriteError,
     SkillError,
     VideoNotFoundError,
     exit_code_for_error,
@@ -47,81 +44,26 @@ Examples:
         """,
     )
 
+    parser.add_argument("url", nargs="?", help="Bilibili URL or BV ID")
     parser.add_argument(
-        "url",
-        nargs="?",
-        help="Bilibili URL or BV ID",
+        "-o", "--output-dir", default="./output", help="Output directory"
     )
-
+    parser.add_argument("--output-lang", choices=["zh", "en", "zh+en"], default="zh")
     parser.add_argument(
-        "-o",
-        "--output-dir",
-        default="./output",
-        help="Output directory (default: ./output)",
+        "--skip-proofread", action="store_true", help="Skip AI proofreading"
     )
-
     parser.add_argument(
-        "--output-lang",
-        choices=["zh", "en", "zh+en"],
-        default="zh",
-        help="Output language (default: zh)",
+        "--skip-summary", action="store_true", help="Skip AI summarization"
     )
-
+    parser.add_argument("--cache-dir", default="./.cache", help="Cache directory")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
+    parser.add_argument("--check", action="store_true", help="Run preflight checks")
+    parser.add_argument("--check-json", action="store_true", help="Preflight as JSON")
     parser.add_argument(
-        "--skip-proofread",
-        action="store_true",
-        help="Skip AI proofreading",
+        "--skip-auth-check", action="store_true", help="Skip auth check"
     )
-
-    parser.add_argument(
-        "--skip-summary",
-        action="store_true",
-        help="Skip AI summarization",
-    )
-
-    parser.add_argument(
-        "--cache-dir",
-        default="./.cache",
-        help="Cache directory (default: ./.cache)",
-    )
-
-    parser.add_argument(
-        "-v",
-        "--verbose",
-        action="store_true",
-        help="Verbose output",
-    )
-
-    parser.add_argument(
-        "--check",
-        action="store_true",
-        help="Run preflight checks and exit",
-    )
-
-    parser.add_argument(
-        "--check-json",
-        action="store_true",
-        help="Output preflight check results as JSON",
-    )
-
-    parser.add_argument(
-        "--skip-auth-check",
-        action="store_true",
-        help="Skip BBDown auth check in preflight",
-    )
-
-    parser.add_argument(
-        "--json-output",
-        action="store_true",
-        help="Output result as JSON (for sub-skill invocation)",
-    )
-
-    parser.add_argument(
-        "--version",
-        action="version",
-        version="%(prog)s 0.1.0",
-    )
-
+    parser.add_argument("--json-output", action="store_true", help="Output as JSON")
+    parser.add_argument("--version", action="version", version="%(prog)s 0.2.0")
     return parser
 
 
@@ -170,7 +112,6 @@ def run_extraction(
     if verbose:
         print(f"[INFO] Title: {info.title}")
         print(f"[INFO] Has subtitle: {info.subtitle_info.has_subtitle}")
-        print(f"[INFO] Has AI subtitle: {info.subtitle_info.has_ai_subtitle}")
 
     segments: list[Segment] = []
 
@@ -180,9 +121,7 @@ def run_extraction(
                 print(f"[INFO] Loading subtitle: {srt_file.name}")
             segments = load_segments_from_subtitle_file(srt_file)
             break
-    elif info.subtitle_info.has_subtitle:
-        pass
-    else:
+    elif not info.subtitle_info.has_subtitle:
         warnings.append("No subtitles found, attempting ASR transcription")
 
         import shutil
@@ -210,7 +149,7 @@ def run_extraction(
             raise
 
     if not segments:
-        raise NoSubtitleError(video_id or "unknown")
+        raise NoSubtitleError(video_id)
 
     if not skip_proofread:
         import os
@@ -237,9 +176,10 @@ def run_extraction(
     md_content = render_transcript_markdown(segments, title=info.title)
 
     lang_suffix = "" if output_lang == "zh" else f".{output_lang}"
-    srt_path = output_dir / f"{info.title or video_id}{lang_suffix}.srt"
-    vtt_path = output_dir / f"{info.title or video_id}{lang_suffix}.vtt"
-    md_path = output_dir / f"{info.title or video_id}.transcript.md"
+    safe_title = (info.title or video_id).replace("/", "_").replace("\\", "_")
+    srt_path = output_dir / f"{safe_title}{lang_suffix}.srt"
+    vtt_path = output_dir / f"{safe_title}{lang_suffix}.vtt"
+    md_path = output_dir / f"{safe_title}.transcript.md"
 
     srt_path.write_text(srt_content, encoding="utf-8")
     vtt_path.write_text(vtt_content, encoding="utf-8")
@@ -247,7 +187,6 @@ def run_extraction(
 
     if verbose:
         print(f"[INFO] Generated: {srt_path.name}")
-        print(f"[INFO] Generated: {vtt_path.name}")
         print(f"[INFO] Generated: {md_path.name}")
 
     summary_json_path = None
@@ -266,22 +205,18 @@ def run_extraction(
             summarizer = SummarizeAgent()
             try:
                 result = summarizer.summarize(segments, title=info.title)
-                summary_json_path = (
-                    output_dir / f"{info.title or video_id}.summary.json"
-                )
-                summary_md_path = output_dir / f"{info.title or video_id}.summary.md"
+                summary_json_path = output_dir / f"{safe_title}.summary.json"
+                summary_md_path = output_dir / f"{safe_title}.summary.md"
                 summary_json_path.write_text(
                     json.dumps(result.summary, ensure_ascii=False, indent=2),
                     encoding="utf-8",
                 )
                 summary_md_path.write_text(result.raw_text or "", encoding="utf-8")
-                if verbose:
-                    print(f"[INFO] Generated: {summary_json_path.name}")
             except Exception as e:
                 warnings.append(f"Summarization failed: {e}")
 
     output = SubtitleOutput(
-        video_id=video_id or "unknown",
+        video_id=video_id,
         title=info.title,
         transcript_md=md_path,
         srt_file=srt_path,

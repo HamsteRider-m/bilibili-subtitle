@@ -10,9 +10,9 @@ dependencies = [
 [project.optional-dependencies]
 claude = [
   "anthropic>=0.45.0",
-  "claude-agent-sdk>=0.1.0",
 ]
 transcribe = [
+  "dashscope>=1.20.0",
   "openai>=1.0.0",
 ]
 dev = [
