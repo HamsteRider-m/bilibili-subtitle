@@ -12,157 +12,158 @@ user-invocable: true
 
 | 任务 | 命令 |
 |------|------|
+| 前置检查 | `pixi run python -m bilibili_subtitle --check` |
 | 基本提取 | `pixi run python -m bilibili_subtitle "BV1234567890"` |
 | 快速模式 | `pixi run python -m bilibili_subtitle "URL" --skip-proofread --skip-summary` |
+| JSON 输出 | `pixi run python -m bilibili_subtitle "URL" --json-output` |
 | 双语输出 | `pixi run python -m bilibili_subtitle "URL" --output-lang zh+en` |
-| 指定目录 | `pixi run python -m bilibili_subtitle "URL" -o ./subtitles` |
 
-## 角色定位（可独立运行，也可做子 Skill）
+## 执行层级
 
-- 独立使用：直接 `pixi run python -m bilibili_subtitle ...`
-- 子 Skill 使用：由主编排器（例如 `anything-to-notebooklm`）调用
-- 对外契约：输入 B 站 URL/BV，输出 `{video_id}.transcript.md` 等文件
-
-## 前置条件
-
-### 1. 安装
-
-```bash
-# Claude Code
-cd ~/.claude/skills/bilibili-subtitle
-./install.sh
-
-# Codex/Agents（如使用该目录）
-cd ~/.agents/skills/bilibili-subtitle
-./install.sh
+```
+┌─────────────────────────────────────────────────────────┐
+│ Layer 0: Preflight Check (前置检查)                      │
+│   --check → 验证 BBDown/API Keys/登录状态               │
+├─────────────────────────────────────────────────────────┤
+│ Layer 1: Video Detection (视频检测)                      │
+│   URL → BBDown → 字幕存在性检测                         │
+├─────────────────────────────────────────────────────────┤
+│ Layer 2: Content Extraction (内容提取)                   │
+│   有字幕 → 加载 SRT → 校对                               │
+│   无字幕 → 下载音频 → ASR 转录 → 校对                    │
+├─────────────────────────────────────────────────────────┤
+│ Layer 3: Enhancement (增强处理)                          │
+│   校对(ANTHROPIC_API_KEY) → 摘要(ANTHROPIC_API_KEY)     │
+└─────────────────────────────────────────────────────────┘
 ```
 
-### 2. 外部工具
+## 前置条件检查
 
-| 工具 | 用途 | 安装 |
-|------|------|------|
-| BBDown | 视频信息/字幕下载 | `./install.sh` 自动检查/安装 |
-| ffmpeg | 音频转换 | `pixi` 环境内提供 |
-
-### 3. API Keys
-
-| Key | Provider | 用途 |
-|-----|----------|------|
-| `ANTHROPIC_API_KEY` | [Anthropic](https://console.anthropic.com/) | 校对/翻译/摘要 |
-| `DASHSCOPE_API_KEY` | [阿里云 DashScope](https://dashscope.console.aliyun.com/) | ASR 转录（仅无字幕时需要） |
+**必须先运行**，验证环境配置：
 
 ```bash
-# 添加到 ~/.zshrc
-export ANTHROPIC_API_KEY="your-key"
-export DASHSCOPE_API_KEY="your-key"  # 可选
+pixi run python -m bilibili_subtitle --check
 ```
 
-### 4. BBDown 认证
+输出示例：
+```
+✅ BBDown: Installed (1.6.3)
+✅ BBDown Auth: Logged in
+✅ ffmpeg: Installed
+⚠️  ANTHROPIC_API_KEY: Not set (required for proofreading)
+⚠️  DASHSCOPE_API_KEY: Not set (required for ASR)
+✅ Python Dependencies: All installed
+```
+
+JSON 格式输出（便于父 skill 解析）：
+```bash
+pixi run python -m bilibili_subtitle --check --check-json
+```
+
+## 错误分级
+
+| Code | Level | 说明 | 修复建议 |
+|------|-------|------|----------|
+| E001 | FATAL | BBDown 未安装 | `./install.sh` |
+| E002 | FATAL | BBDown 未登录 | `BBDown login` |
+| E003 | RECOVERABLE | 下载失败 | 检查 URL/网络 |
+| E004 | RECOVERABLE | 无字幕 | 自动触发 ASR |
+| E005 | FATAL | ASR 未配置 | 设置 DASHSCOPE_API_KEY |
+| E006 | RECOVERABLE | AI 功能未配置 | 使用 --skip-* 或设置 API Key |
+| E007 | FATAL | ffmpeg 未安装 | `pixi install` |
+| E008 | FATAL | URL 无效 | 提供正确的 BV/URL |
+| E010 | FATAL | 视频不存在 | 检查视频是否删除/私有 |
+
+**退出码**：
+- `0` - 成功
+- `1` - 致命错误（FATAL）
+- `2` - 可恢复错误（RECOVERABLE，部分完成）
+- `3` - 部分成功（有警告）
+
+## 作为子 Skill 的调用契约
+
+### 标准调用
 
 ```bash
-BBDown login  # 扫码登录，Cookie 保存在 BBDown.data
+pixi run python -m bilibili_subtitle "<URL>" \
+  -o /tmp/bilibili_output \
+  --skip-summary \
+  --json-output
 ```
 
-### 5. 安装后自检
+### 成功判定
 
-```bash
-pixi run python -m bilibili_subtitle --help
-pixi run python -m bilibili_subtitle "BV1xx411c7mD" --skip-proofread --skip-summary -o ./output
+1. 退出码为 `0` 或 `2`
+2. 输出目录存在 `*.transcript.md`
+
+### JSON 输出结构
+
+```json
+{
+  "exit_code": 0,
+  "success": true,
+  "output": {
+    "video_id": "BV1xxx",
+    "title": "视频标题",
+    "files": {
+      "transcript": "/path/to/xxx.transcript.md",
+      "srt": "/path/to/xxx.srt",
+      "vtt": "/path/to/xxx.vtt",
+      "summary_json": null
+    }
+  },
+  "warnings": [],
+  "errors": []
+}
 ```
 
-## 触发方式
+### 父 Skill 集成示例
 
-- `/bilibili-subtitle [URL]`
-- "提取这个B站视频的字幕 [URL]"
-- "把这个视频转成文字 BV1234567890"
-- "生成这个视频的摘要 [URL]"
+```python
+from bilibili_subtitle import build_cli_command, ExitCode
 
-## CLI 参数
-
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `url` | Bilibili URL 或 BV ID | 必填 |
-| `--output-dir, -o` | 输出目录 | `./output` |
-| `--output-lang` | 输出语言 `zh`/`en`/`zh+en` | `zh` |
-| `--skip-proofread` | 跳过校对 | false |
-| `--skip-summary` | 跳过摘要 | false |
-| `--cache-dir` | 缓存目录 | `./.cache` |
-| `--verbose, -v` | 详细输出 | false |
+cmd = build_cli_command(
+    "BV1xxx",
+    output_dir="/tmp/output",
+    skip_proofread=True,
+    skip_summary=True,
+)
+# ['pixi', 'run', 'python', '-m', 'bilibili_subtitle', 'BV1xxx', ...]
+```
 
 ## 输出文件
 
 ```
 output/
-├── {video_id}.zh.srt          # SRT 字幕
-├── {video_id}.zh.vtt          # VTT 字幕
-├── {video_id}.transcript.md   # Markdown 逐字稿
-├── {video_id}.summary.json    # 结构化摘要
-└── {video_id}.summary.md      # 摘要 (Markdown)
+├── {title}.srt          # SRT 字幕
+├── {title}.vtt          # VTT 字幕
+├── {title}.transcript.md   # Markdown 逐字稿
+├── {title}.summary.json    # 结构化摘要 (可选)
+└── {title}.summary.md      # 摘要 Markdown (可选)
 ```
 
-## 处理流程
+## API Keys
 
-```
-URL → BBDown 检测 → [有字幕?]
-                     ├─ YES → 加载 SRT → 校对 → 输出
-                     └─ NO  → 下载音频 → ASR 转录 → 校对 → 输出
-```
+| Key | Provider | 用途 | 必需性 |
+|-----|----------|------|--------|
+| `ANTHROPIC_API_KEY` | Anthropic | 校对/摘要 | 推荐 |
+| `DASHSCOPE_API_KEY` | 阿里云 | ASR 转录 | 无字幕时必需 |
 
-## 作为子 Skill 的调用契约
-
-父 Skill 推荐执行：
+## 安装
 
 ```bash
-pixi run python -m bilibili_subtitle "<URL或BV>" -o /tmp --skip-summary
+cd ~/.agents/skills/bilibili-subtitle
+./install.sh
+BBDown login  # 扫码登录
 ```
 
-成功判定：
+## 详细文档
 
-- 退出码为 `0`
-- 输出目录存在 `*.transcript.md`
-
-## 错误处理
-
-### 1. BBDown 未安装
-- **错误**: `command not found: BBDown`
-- **原因**: BBDown 未安装或不在 PATH 中
-- **解决**: 重新运行 `./install.sh` 或手动安装 BBDown
-
-### 2. BBDown 认证失败
-- **错误**: `需要登录` 或下载失败
-- **原因**: Cookie 过期或未登录
-- **解决**: 运行 `BBDown login` 重新扫码
-
-### 3. ASR 转录失败
-- **错误**: `Missing DASHSCOPE_API_KEY`
-- **原因**: 视频无字幕且未配置 DashScope
-- **解决**: 设置 `DASHSCOPE_API_KEY` 环境变量
-
-### 4. 校对/摘要失败
-- **错误**: `Missing ANTHROPIC_API_KEY`
-- **原因**: 未配置 Anthropic API
-- **解决**: 设置 `ANTHROPIC_API_KEY` 或使用 `--skip-proofread --skip-summary`
-
-## 示例
-
-### 基本用法
-
-```bash
-pixi run python -m bilibili_subtitle "https://www.bilibili.com/video/BV1234567890/"
-```
-
-### 快速提取（跳过 AI 处理）
-
-```bash
-pixi run python -m bilibili_subtitle "BV1234567890" --skip-proofread --skip-summary -v
-```
-
-### 双语输出
-
-```bash
-pixi run python -m bilibili_subtitle "BV1234567890" --output-lang zh+en
-```
+- [references/preflight.md](references/preflight.md) - 前置检查详解
+- [references/errors.md](references/errors.md) - 错误处理指南
+- [references/contract.md](references/contract.md) - 子 Skill 契约
+- [references/agents.md](references/agents.md) - AI Agent 配置
 
 ---
 
-**版本**: v0.1.0
+**版本**: v0.2.0
