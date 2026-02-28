@@ -88,32 +88,43 @@ else
         *) echo -e "${RED}❌ 无法识别架构: $BBDOWN_ARCH${NC}"; exit 1 ;;
     esac
 
-    BBDOWN_ZIP=$(curl -sL "https://api.github.com/repos/nilaoda/BBDown/releases/latest" \
-        | grep -o "\"browser_download_url\": \"[^\"]*_${BBDOWN_OS}-${BBDOWN_ARCH}\\.zip\"" \
-        | head -n1 | cut -d'"' -f4)
-
-    if [ -z "$BBDOWN_ZIP" ]; then
-        echo -e "${RED}❌ BBDown 下载链接获取失败${NC}"
-        echo "请手动下载: https://github.com/nilaoda/BBDown/releases"
+    if ! command -v gh &> /dev/null; then
+        echo -e "${RED}❌ 需要 gh CLI 来下载 BBDown nightly build${NC}"
+        echo "安装方式: https://cli.github.com/"
         exit 1
     fi
 
+    BBDOWN_ARTIFACT="BBDown_${BBDOWN_OS}-${BBDOWN_ARCH}"
+    BBDOWN_BIN="$HOME/.local/bin"
+    BBDOWN_TMP="/tmp/bbdown-dl"
+    mkdir -p "$BBDOWN_BIN" "$BBDOWN_TMP"
+
     if [ -n "$BBDOWN_DRY_RUN" ]; then
-        echo "BBDOWN_URL=$BBDOWN_ZIP"
+        echo "BBDOWN_ARTIFACT=$BBDOWN_ARTIFACT"
     else
-        BBDOWN_TMP="/tmp/BBDown.zip"
-        BBDOWN_BIN="$HOME/.local/bin"
-        mkdir -p "$BBDOWN_BIN"
-        if curl -sL "$BBDOWN_ZIP" -o "$BBDOWN_TMP" && unzip -q -o "$BBDOWN_TMP" -d "$BBDOWN_BIN" 2>/dev/null; then
+        BBDOWN_RUN_ID=$(gh run list -R nilaoda/BBDown -b master -s success --limit 1 --json databaseId -q '.[0].databaseId')
+        if [ -z "$BBDOWN_RUN_ID" ]; then
+            echo -e "${RED}❌ 无法获取 BBDown 最新构建${NC}"
+            exit 1
+        fi
+
+        rm -rf "$BBDOWN_TMP"/*
+        if gh run download "$BBDOWN_RUN_ID" -R nilaoda/BBDown --name "$BBDOWN_ARTIFACT" -D "$BBDOWN_TMP"; then
+            BBDOWN_ZIP=$(find "$BBDOWN_TMP" -name '*.zip' | head -1)
+            if [ -n "$BBDOWN_ZIP" ]; then
+                unzip -q -o "$BBDOWN_ZIP" -d "$BBDOWN_BIN"
+            else
+                cp "$BBDOWN_TMP"/BBDown "$BBDOWN_BIN/" 2>/dev/null || cp "$BBDOWN_TMP"/BBDown* "$BBDOWN_BIN/"
+            fi
             chmod +x "$BBDOWN_BIN/BBDown"
-            rm -f "$BBDOWN_TMP"
-            echo -e "${GREEN}✅ BBDown 安装完成${NC}"
+            rm -rf "$BBDOWN_TMP"
+            echo -e "${GREEN}✅ BBDown (nightly build #${BBDOWN_RUN_ID}) 安装完成${NC}"
             if [[ ":$PATH:" != *":$BBDOWN_BIN:"* ]]; then
                 echo -e "${YELLOW}⚠️  请将 $BBDOWN_BIN 添加到 PATH${NC}"
             fi
         else
-            echo -e "${RED}❌ BBDown 解压失败${NC}"
-            echo "请手动下载: https://github.com/nilaoda/BBDown/releases"
+            echo -e "${RED}❌ BBDown 下载失败${NC}"
+            echo "请确认 gh 已登录: gh auth status"
             exit 1
         fi
     fi

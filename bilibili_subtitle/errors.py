@@ -196,6 +196,18 @@ class RateLimitError(SkillError):
         )
 
 
+class SubtitleContentError(SkillError):
+    def __init__(self, reason: str = "empty segments") -> None:
+        super().__init__(
+            code="E012",
+            level=ErrorLevel.RECOVERABLE,
+            message=f"Subtitle content issue: {reason}",
+            remediation=Remediation(
+                hint="Retry download or try a different subtitle language",
+            ),
+        )
+
+
 def exit_code_for_error(error: SkillError) -> int:
     return {
         ErrorLevel.FATAL: 1,

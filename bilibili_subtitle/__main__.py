@@ -14,6 +14,8 @@ import json
 import sys
 from pathlib import Path
 
+import re
+
 from .contract import ExitCode, ExecutionResult, SubtitleOutput
 from .errors import (
     ASRConfigError,
@@ -28,6 +30,18 @@ from .errors import (
 )
 from .preflight import run_preflight
 from .url_parser import parse_bilibili_ref
+
+
+_WINDOWS_ILLEGAL_RE = re.compile(r'[/\\:*?"<>|]')
+_CONTROL_CHAR_RE = re.compile(r'[\x00-\x1f]')
+
+
+def _sanitize_filename(name: str) -> str:
+    """Remove Windows-illegal characters and control chars from a filename."""
+    name = _CONTROL_CHAR_RE.sub("", name)
+    name = _WINDOWS_ILLEGAL_RE.sub("_", name)
+    name = name.strip().strip("_").strip()
+    return name or "untitled"
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -92,7 +106,7 @@ def run_extraction(
 
     from .bbdown_client import BBDownClient
     from .segment import Segment
-    from .subtitle_loader import load_segments_from_subtitle_file
+    from .subtitle_loader import load_segments_from_subtitle_file, check_title_relevance
 
     client = BBDownClient()
 
@@ -116,11 +130,36 @@ def run_extraction(
     segments: list[Segment] = []
 
     if info.subtitle_files:
-        for srt_file in info.subtitle_files:
+        max_crosstalk_retries = 2
+        for attempt in range(max_crosstalk_retries + 1):
+            sub_file = info.subtitle_files[0]
             if verbose:
-                print(f"[INFO] Loading subtitle: {srt_file.name}")
-            segments = load_segments_from_subtitle_file(srt_file)
-            break
+                print(f"[INFO] Loading subtitle: {sub_file.name}")
+            load_result = load_segments_from_subtitle_file(sub_file, title=info.title)
+            segments = load_result.segments
+
+            if load_result.relevant:
+                break
+
+            # Crosstalk detected — subtitle may belong to a different video
+            if attempt < max_crosstalk_retries:
+                warnings.append(
+                    f"Crosstalk suspected (attempt {attempt + 1}), re-downloading..."
+                )
+                if verbose:
+                    print(f"[WARN] Subtitle may not match title, retrying ({attempt + 1}/{max_crosstalk_retries})")
+                # Delete stale file and re-fetch
+                sub_file.unlink(missing_ok=True)
+                try:
+                    info = client.get_video_info(canonical_url, cache_dir)
+                except Exception:
+                    break  # Can't retry, use what we have
+                if not info.subtitle_files:
+                    break
+            else:
+                warnings.append(
+                    "Subtitle content may not match video title (crosstalk); proceeding anyway"
+                )
     elif not info.subtitle_info.has_subtitle:
         warnings.append("No subtitles found, attempting ASR transcription")
 
@@ -176,7 +215,7 @@ def run_extraction(
     md_content = render_transcript_markdown(segments, title=info.title)
 
     lang_suffix = "" if output_lang == "zh" else f".{output_lang}"
-    safe_title = (info.title or video_id).replace("/", "_").replace("\\", "_")
+    safe_title = _sanitize_filename(info.title or video_id)
     srt_path = output_dir / f"{safe_title}{lang_suffix}.srt"
     vtt_path = output_dir / f"{safe_title}{lang_suffix}.vtt"
     md_path = output_dir / f"{safe_title}.transcript.md"

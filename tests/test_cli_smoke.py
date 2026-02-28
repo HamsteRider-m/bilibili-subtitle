@@ -11,4 +11,4 @@ def test_cli_help_runs() -> None:
     )
     output = proc.stdout + proc.stderr
     assert "usage: bilibili_subtitle" in output
-    assert "Extract subtitles from Bilibili videos" in output
+    assert "Extract Bilibili subtitles" in output

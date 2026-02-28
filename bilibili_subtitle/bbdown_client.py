@@ -1,10 +1,35 @@
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+# --- Compiled regexes for subtitle info extraction (Fix 5) ---
+_SUBTITLE_LINE_RE = re.compile(
+    r"下载字幕|download.*subtitle|saving subtitle|字幕下载", re.IGNORECASE
+)
+_AI_MARKER_RE = re.compile(
+    r"ai[_\-]|AI识别|auto.?generated|asr|自动识别", re.IGNORECASE
+)
+_LANG_RE = re.compile(
+    r"\b(zh-hans|zh-hant|zh|en|ja|ko)\b", re.IGNORECASE
+)
+
+_LANG_NORMALIZE: dict[str, str] = {
+    "zh-hans": "zh",
+    "zh-hant": "zh-hant",
+}
+
+# Errors that should NOT be retried
+_FATAL_PATTERNS = re.compile(
+    r"login|auth|cookie|not found|不存在|404|权限", re.IGNORECASE
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,23 +70,68 @@ class BBDownClient:
         return [self._bbdown]
 
     def _run(
-        self, args: list[str], *, check: bool = True
+        self,
+        args: list[str],
+        *,
+        check: bool = True,
+        max_retries: int = 3,
+        retry_delay: float = 1.0,
+        timeout: int = 120,
     ) -> subprocess.CompletedProcess[str]:
-        try:
-            return subprocess.run(
-                args,
-                capture_output=True,
-                text=True,
-                check=check,
-            )
-        except subprocess.CalledProcessError as e:
-            raise BBDownError(f"BBDown failed: {e.stderr}") from e
+        """Run BBDown with retry + timeout (Fix 1)."""
+        last_exc: Exception | None = None
 
-    def get_video_info(self, url: str, work_dir: Path) -> VideoInfo:
+        for attempt in range(max_retries):
+            try:
+                result = subprocess.run(
+                    args,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=timeout,
+                )
+                # If check requested and non-zero, see if it's fatal
+                if check and result.returncode != 0:
+                    combined = result.stdout + result.stderr
+                    if _FATAL_PATTERNS.search(combined):
+                        raise BBDownError(f"BBDown failed (non-retryable): {result.stderr}")
+                    # Retryable error
+                    last_exc = BBDownError(f"BBDown failed (rc={result.returncode}): {result.stderr}")
+                    logger.warning(
+                        "BBDown attempt %d/%d failed (rc=%d), retrying in %.1fs",
+                        attempt + 1, max_retries, result.returncode, retry_delay * (2 ** attempt),
+                    )
+                    time.sleep(retry_delay * (2 ** attempt))
+                    continue
+                return result
+
+            except subprocess.TimeoutExpired:
+                last_exc = BBDownError(f"BBDown timed out after {timeout}s")
+                logger.warning(
+                    "BBDown attempt %d/%d timed out, retrying in %.1fs",
+                    attempt + 1, max_retries, retry_delay * (2 ** attempt),
+                )
+                time.sleep(retry_delay * (2 ** attempt))
+                continue
+
+            except BBDownError:
+                raise
+
+            except Exception as e:
+                raise BBDownError(f"BBDown failed: {e}") from e
+
+        raise last_exc or BBDownError("BBDown failed after retries")
+
+    def get_video_info(
+        self, url: str, work_dir: Path, *, lang: str | None = "zh-Hans"
+    ) -> VideoInfo:
+        """Download subtitles and return video info (Fix 4, 7)."""
         work_dir.mkdir(parents=True, exist_ok=True)
         video_id = self._extract_video_id(url)
 
-        existing_files = set(work_dir.glob(f"{video_id}*.srt"))
+        existing_files = set(work_dir.glob(f"{video_id}*.srt")) | set(
+            work_dir.glob(f"{video_id}*.vtt")
+        )
 
         args = self._base_args() + [
             "--sub-only",
@@ -71,12 +141,25 @@ class BBDownClient:
             video_id,
             "--work-dir",
             str(work_dir),
-            url,
         ]
+        if lang is not None:
+            args += ["--select-lang", lang]
+        args.append(url)
+
         result = self._run(args, check=False)
         output = result.stdout + result.stderr
 
-        new_files = sorted(set(work_dir.glob(f"{video_id}*.srt")) - existing_files)
+        new_files = sorted(
+            (set(work_dir.glob(f"{video_id}*.srt")) | set(work_dir.glob(f"{video_id}*.vtt")))
+            - existing_files
+        )
+
+        # Fix 7: raise on non-zero exit when no files were produced
+        if result.returncode != 0 and not new_files:
+            logger.error("BBDown exited %d with no subtitle files", result.returncode)
+            raise BBDownError(
+                f"BBDown failed (rc={result.returncode}): {output[-500:]}"
+            )
 
         title = self._extract_title(output)
         subtitle_info = self._extract_subtitle_info(output)
@@ -105,18 +188,23 @@ class BBDownClient:
         return None
 
     def _extract_subtitle_info(self, output: str) -> SubtitleInfo:
+        """Parse BBDown output for subtitle metadata (Fix 5)."""
         has_subtitle = False
         has_ai_subtitle = False
         languages: list[str] = []
 
         for line in output.splitlines():
-            if "下载字幕" in line:
-                has_subtitle = True
-                if "ai-" in line.lower() or "AI识别" in line:
-                    has_ai_subtitle = True
-                lang_match = re.search(r"(ai-)?zh", line.lower())
-                if lang_match and "zh" not in languages:
-                    languages.append("zh")
+            if not _SUBTITLE_LINE_RE.search(line):
+                continue
+            has_subtitle = True
+            if _AI_MARKER_RE.search(line):
+                has_ai_subtitle = True
+            lang_match = _LANG_RE.search(line)
+            if lang_match:
+                raw = lang_match.group(1).lower()
+                normalized = _LANG_NORMALIZE.get(raw, raw)
+                if normalized not in languages:
+                    languages.append(normalized)
 
         return SubtitleInfo(
             has_subtitle=has_subtitle,
