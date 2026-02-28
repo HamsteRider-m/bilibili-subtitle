@@ -64,69 +64,85 @@ fi
 echo ""
 echo -e "${YELLOW}[4/4] 检查外部工具...${NC}"
 
-# 检查 BBDown
-if command -v BBDown &> /dev/null && [ -z "$BBDOWN_FORCE_INSTALL" ]; then
-    BBDOWN_VERSION=$(BBDown --help 2>&1 | head -n1 | grep -o 'version [0-9.]*' || echo "installed")
-    echo -e "${GREEN}✅ BBDown 已安装 ($BBDOWN_VERSION)${NC}"
+# 检查 BBDown（总是检查 nightly 更新）
+BBDOWN_OS="${BBDOWN_OS:-$(uname -s)}"
+BBDOWN_ARCH="${BBDOWN_ARCH:-$(uname -m)}"
+
+case "$BBDOWN_OS" in
+    Linux*) BBDOWN_OS="linux" ;;
+    Darwin*) BBDOWN_OS="osx" ;;
+    MINGW*|MSYS*|CYGWIN*|Windows_NT*) BBDOWN_OS="win" ;;
+    *) echo -e "${RED}❌ 无法识别操作系统: $BBDOWN_OS${NC}"; exit 1 ;;
+esac
+
+case "$BBDOWN_ARCH" in
+    x86_64|amd64) BBDOWN_ARCH="x64" ;;
+    arm64|aarch64) BBDOWN_ARCH="arm64" ;;
+    *) echo -e "${RED}❌ 无法识别架构: $BBDOWN_ARCH${NC}"; exit 1 ;;
+esac
+
+if ! command -v gh &> /dev/null; then
+    echo -e "${RED}❌ 需要 gh CLI 来下载 BBDown nightly build${NC}"
+    echo "安装方式: https://cli.github.com/"
+    exit 1
+fi
+
+BBDOWN_ARTIFACT="BBDown_${BBDOWN_OS}-${BBDOWN_ARCH}"
+BBDOWN_BIN="$HOME/.local/bin"
+BBDOWN_TMP="/tmp/bbdown-dl"
+mkdir -p "$BBDOWN_BIN" "$BBDOWN_TMP"
+
+if [ -n "$BBDOWN_DRY_RUN" ]; then
+    echo "BBDOWN_ARTIFACT=$BBDOWN_ARTIFACT"
 else
-    echo -e "${YELLOW}⚠️  BBDown 未安装${NC}"
-    echo "正在下载 BBDown..."
+    echo "正在检查 BBDown nightly 更新..."
 
-    BBDOWN_OS="${BBDOWN_OS:-$(uname -s)}"
-    BBDOWN_ARCH="${BBDOWN_ARCH:-$(uname -m)}"
-
-    case "$BBDOWN_OS" in
-        Linux*) BBDOWN_OS="linux" ;;
-        Darwin*) BBDOWN_OS="osx" ;;
-        MINGW*|MSYS*|CYGWIN*|Windows_NT*) BBDOWN_OS="win" ;;
-        *) echo -e "${RED}❌ 无法识别操作系统: $BBDOWN_OS${NC}"; exit 1 ;;
-    esac
-
-    case "$BBDOWN_ARCH" in
-        x86_64|amd64) BBDOWN_ARCH="x64" ;;
-        arm64|aarch64) BBDOWN_ARCH="arm64" ;;
-        *) echo -e "${RED}❌ 无法识别架构: $BBDOWN_ARCH${NC}"; exit 1 ;;
-    esac
-
-    if ! command -v gh &> /dev/null; then
-        echo -e "${RED}❌ 需要 gh CLI 来下载 BBDown nightly build${NC}"
-        echo "安装方式: https://cli.github.com/"
+    BBDOWN_RUN_ID=$(gh run list -R nilaoda/BBDown -b master -s success --limit 1 --json databaseId -q '.[0].databaseId')
+    if [ -z "$BBDOWN_RUN_ID" ]; then
+        echo -e "${RED}❌ 无法获取 BBDown 最新构建${NC}"
         exit 1
     fi
 
-    BBDOWN_ARTIFACT="BBDown_${BBDOWN_OS}-${BBDOWN_ARCH}"
-    BBDOWN_BIN="$HOME/.local/bin"
-    BBDOWN_TMP="/tmp/bbdown-dl"
-    mkdir -p "$BBDOWN_BIN" "$BBDOWN_TMP"
-
-    if [ -n "$BBDOWN_DRY_RUN" ]; then
-        echo "BBDOWN_ARTIFACT=$BBDOWN_ARTIFACT"
-    else
-        BBDOWN_RUN_ID=$(gh run list -R nilaoda/BBDown -b master -s success --limit 1 --json databaseId -q '.[0].databaseId')
-        if [ -z "$BBDOWN_RUN_ID" ]; then
-            echo -e "${RED}❌ 无法获取 BBDown 最新构建${NC}"
-            exit 1
+    rm -rf "$BBDOWN_TMP"/*
+    if gh run download "$BBDOWN_RUN_ID" -R nilaoda/BBDown --name "$BBDOWN_ARTIFACT" -D "$BBDOWN_TMP"; then
+        # 解压到临时目录
+        BBDOWN_EXTRACT="/tmp/bbdown-extract"
+        rm -rf "$BBDOWN_EXTRACT"
+        mkdir -p "$BBDOWN_EXTRACT"
+        BBDOWN_ZIP=$(find "$BBDOWN_TMP" -name '*.zip' | head -1)
+        if [ -n "$BBDOWN_ZIP" ]; then
+            unzip -q -o "$BBDOWN_ZIP" -d "$BBDOWN_EXTRACT"
+        else
+            cp "$BBDOWN_TMP"/BBDown "$BBDOWN_EXTRACT/" 2>/dev/null || cp "$BBDOWN_TMP"/BBDown* "$BBDOWN_EXTRACT/"
         fi
 
-        rm -rf "$BBDOWN_TMP"/*
-        if gh run download "$BBDOWN_RUN_ID" -R nilaoda/BBDown --name "$BBDOWN_ARTIFACT" -D "$BBDOWN_TMP"; then
-            BBDOWN_ZIP=$(find "$BBDOWN_TMP" -name '*.zip' | head -1)
-            if [ -n "$BBDOWN_ZIP" ]; then
-                unzip -q -o "$BBDOWN_ZIP" -d "$BBDOWN_BIN"
+        NEW_BIN="$BBDOWN_EXTRACT/BBDown"
+        OLD_BIN="$BBDOWN_BIN/BBDown"
+
+        if [ -f "$OLD_BIN" ]; then
+            OLD_MD5=$(md5sum "$OLD_BIN" 2>/dev/null | cut -d' ' -f1)
+            NEW_MD5=$(md5sum "$NEW_BIN" 2>/dev/null | cut -d' ' -f1)
+            if [ "$OLD_MD5" = "$NEW_MD5" ]; then
+                echo -e "${GREEN}✅ BBDown 已是最新 (build #${BBDOWN_RUN_ID})${NC}"
             else
-                cp "$BBDOWN_TMP"/BBDown "$BBDOWN_BIN/" 2>/dev/null || cp "$BBDOWN_TMP"/BBDown* "$BBDOWN_BIN/"
+                cp "$NEW_BIN" "$OLD_BIN"
+                chmod +x "$OLD_BIN"
+                echo -e "${GREEN}✅ BBDown 已更新到 nightly build #${BBDOWN_RUN_ID}${NC}"
             fi
-            chmod +x "$BBDOWN_BIN/BBDown"
-            rm -rf "$BBDOWN_TMP"
+        else
+            cp "$NEW_BIN" "$OLD_BIN"
+            chmod +x "$OLD_BIN"
             echo -e "${GREEN}✅ BBDown (nightly build #${BBDOWN_RUN_ID}) 安装完成${NC}"
             if [[ ":$PATH:" != *":$BBDOWN_BIN:"* ]]; then
                 echo -e "${YELLOW}⚠️  请将 $BBDOWN_BIN 添加到 PATH${NC}"
             fi
-        else
-            echo -e "${RED}❌ BBDown 下载失败${NC}"
-            echo "请确认 gh 已登录: gh auth status"
-            exit 1
         fi
+
+        rm -rf "$BBDOWN_TMP" "$BBDOWN_EXTRACT"
+    else
+        echo -e "${RED}❌ BBDown 下载失败${NC}"
+        echo "请确认 gh 已登录: gh auth status"
+        exit 1
     fi
 fi
 
