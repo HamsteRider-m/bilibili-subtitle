@@ -1,0 +1,39 @@
+name: bilibili-subtitle nightly regression
+
+on:
+  schedule:
+    # UTC 18:00 = China time (UTC+8) 02:00
+    - cron: "0 18 * * *"
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: [self-hosted, macmini-skill-eval]
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pixi install
+        run: pixi install
+
+      - name: Install dev deps (pytest)
+        run: |
+          pixi run python -m pip install -U pip
+          pixi run python -m pip install -e ".[dev]"
+
+      - name: CLI smoke
+        run: pixi run python -m bilibili_subtitle --help
+
+      - name: Pytest
+        run: |
+          mkdir -p results
+          pixi run pytest -q | tee results/pytest.txt
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-results
+          path: results/**
