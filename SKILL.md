@@ -8,7 +8,61 @@ user-invocable: true
 
 从 Bilibili 视频提取字幕，支持 AI 字幕检测和 ASR 转录回退。
 
+## ⚠️ 前置依赖（必须先安装）
+
+本 skill 使用 **pixi** 作为 Python 环境管理器。所有命令都需要在 skill 目录下运行。
+
+### 1. 安装 pixi（如果尚未安装）
+
+```bash
+curl -fsSL https://pixi.sh/install.sh | bash
+source ~/.bashrc  # 或 ~/.zshrc
+```
+
+### 2. 初始化 skill 环境
+
+**先切换到本 skill 的目录**，然后初始化：
+
+```bash
+# 进入 skill 目录（根据你的安装位置调整）
+cd <skill目录>
+pixi install  # 安装 Python 依赖
+```
+
+> skill 目录位置：`~/.agents/skills/bilibili-subtitle` 或 `~/.claude/skills/bilibili-subtitle`
+
+### 3. 安装外部工具
+
+```bash
+# BBDown（B站下载工具）
+mkdir -p ~/.local/bin
+curl -L "https://github.com/nilaoda/BBDown/releases/download/1.6.3/BBDown_1.6.3_20240814_osx-arm64.zip" -o /tmp/bbdown.zip
+unzip -o /tmp/bbdown.zip -d ~/.local/bin
+chmod +x ~/.local/bin/BBDown
+
+# 登录 B站
+BBDown login  # 扫码登录
+```
+
+### 4. 登录 B站（首次使用时）
+
+```bash
+BBDown login  # 扫码登录，已登录则跳过
+```
+
+**检测是否已登录**：
+```bash
+BBDown logined  # 查看登录状态
+```
+
 ## Quick Reference
+
+**⚠️ 重要：所有命令必须在 skill 目录下运行，并确保 PATH 包含 pixi 和 BBDown**
+
+```bash
+cd <skill目录>
+export PATH="$HOME/.pixi/bin:$HOME/.local/bin:$PATH"
+```
 
 | 任务 | 命令 |
 |------|------|
@@ -149,12 +203,14 @@ output/
 | `ANTHROPIC_API_KEY` | Anthropic | 校对/摘要 | 推荐 |
 | `DASHSCOPE_API_KEY` | 阿里云 | ASR 转录 | 无字幕时必需 |
 
-## 安装
+## 安装（完整流程）
+
+如果上述前置依赖都未安装，可运行一键安装脚本：
 
 ```bash
-cd ~/.agents/skills/bilibili-subtitle
-./install.sh
-BBDown login  # 扫码登录
+cd <skill目录>
+./install.sh  # 会尝试安装 pixi + Python 依赖 + BBDown
+BBDown login  # 扫码登录，已登录则跳过
 ```
 
 ## 详细文档

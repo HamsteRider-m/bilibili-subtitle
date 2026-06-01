@@ -123,35 +123,55 @@ def check_bbdown() -> CheckResult:
 
 
 def check_bbdown_auth() -> CheckResult:
-    bbdown_data = Path.home() / "BBDown.data"
-    if bbdown_data.exists():
-        try:
-            content = bbdown_data.read_text()
-            has_sessdata = "SESSDATA" in content
-            if has_sessdata:
+    """Check BBDown authentication by looking for cookie file.
+
+    BBDown stores cookies in BBDown.data file, which can be in:
+    - ~/.local/bin/BBDown.data (when installed manually)
+    - ~/BBDown.data (when installed via install.sh)
+    - Same directory as BBDown binary
+    """
+    # Possible locations for BBDown.data
+    possible_paths = [
+        Path.home() / ".local" / "bin" / "BBDown.data",
+        Path.home() / "BBDown.data",
+    ]
+
+    # Also check in the same directory as BBDown binary
+    bbdown_path = shutil.which("BBDown")
+    if bbdown_path:
+        possible_paths.append(Path(bbdown_path).parent / "BBDown.data")
+
+    # Also check AppDirectory (BBDown's default location)
+    # BBDown logs show: AppDirectory: /Users/aidis/.local/bin
+    for path in possible_paths:
+        if path.exists():
+            try:
+                content = path.read_text()
+                has_sessdata = "SESSDATA" in content
+                if has_sessdata:
+                    return CheckResult(
+                        name="BBDown Auth",
+                        status=CheckStatus.OK,
+                        message="Logged in",
+                        details={"cookie_file": str(path)},
+                    )
                 return CheckResult(
                     name="BBDown Auth",
-                    status=CheckStatus.OK,
-                    message="Logged in",
-                    details={"cookie_file": str(bbdown_data)},
+                    status=CheckStatus.ERROR,
+                    message=f"Cookie file exists at {path} but no SESSDATA",
+                    remediation="Run: BBDown login",
                 )
-            return CheckResult(
-                name="BBDown Auth",
-                status=CheckStatus.ERROR,
-                message="Cookie file exists but no SESSDATA",
-                remediation="Run: BBDown login",
-            )
-        except Exception as e:
-            return CheckResult(
-                name="BBDown Auth",
-                status=CheckStatus.WARNING,
-                message=f"Cannot read cookie file: {e}",
-                remediation="Run: BBDown login",
-            )
+            except Exception as e:
+                return CheckResult(
+                    name="BBDown Auth",
+                    status=CheckStatus.WARNING,
+                    message=f"Cannot read cookie file: {e}",
+                    remediation="Run: BBDown login",
+                )
     return CheckResult(
         name="BBDown Auth",
         status=CheckStatus.ERROR,
-        message="Not logged in",
+        message="Not logged in (no BBDown.data found)",
         remediation="Run: BBDown login",
     )
 

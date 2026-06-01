@@ -123,9 +123,13 @@ class BBDownClient:
         raise last_exc or BBDownError("BBDown failed after retries")
 
     def get_video_info(
-        self, url: str, work_dir: Path, *, lang: str | None = "zh-Hans"
+        self, url: str, work_dir: Path, *, lang: str | None = None
     ) -> VideoInfo:
-        """Download subtitles and return video info (Fix 4, 7)."""
+        """Download subtitles and return video info.
+
+        Note: BBDown 1.6.3 does not support --select-lang with zh-Hans format.
+        We use --skip-ai=false to include AI-generated subtitles.
+        """
         work_dir.mkdir(parents=True, exist_ok=True)
         video_id = self._extract_video_id(url)
 
@@ -133,18 +137,17 @@ class BBDownClient:
             work_dir.glob(f"{video_id}*.vtt")
         )
 
+        # Build args - use --skip-ai=false to download AI subtitles
+        # Note: BBDown default is --skip-ai (skip AI subtitles)
         args = self._base_args() + [
             "--sub-only",
-            "--skip-ai",
-            "false",
+            "--skip-ai=false",
             "-F",
             video_id,
             "--work-dir",
             str(work_dir),
+            url,
         ]
-        if lang is not None:
-            args += ["--select-lang", lang]
-        args.append(url)
 
         result = self._run(args, check=False)
         output = result.stdout + result.stderr
