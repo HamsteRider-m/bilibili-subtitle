@@ -1,74 +1,46 @@
 # Preflight Check Guide
 
-## Overview
-
-Preflight checks validate the execution environment before running the main extraction workflow.
+Preflight checks validate that BBDown subtitle extraction can run.
 
 ## Usage
 
-### Basic Check
-
 ```bash
 pixi run python -m bilibili_subtitle --check
+pixi run python -m bilibili_subtitle --check-json
 ```
 
-### JSON Output (for parent skills)
+## Checks
 
-```bash
-pixi run python -m bilibili_subtitle --check --check-json
-```
+| Check | Fatal If Missing | Purpose |
+| --- | --- | --- |
+| BBDown | Yes | Subtitle download |
+| BBDown auth | Warning by default | Restricted videos may require login |
+| Output directory | Yes | Ensures outputs can be written |
 
-Output:
+## JSON Example
+
 ```json
 {
   "checks": [
-    {"name": "BBDown", "status": "ok", "message": "Installed (1.6.3)"},
-    {"name": "BBDown Auth", "status": "ok", "message": "Logged in"},
-    {"name": "ffmpeg", "status": "ok", "message": "Installed"},
-    {"name": "ANTHROPIC_API_KEY", "status": "warning", "message": "Not set"},
-    {"name": "DASHSCOPE_API_KEY", "status": "warning", "message": "Not set"}
+    {"name": "BBDown", "status": "ok", "message": "Installed"},
+    {"name": "BBDown auth", "status": "warning", "message": "Login not confirmed"}
   ],
-  "summary": {
-    "can_proceed": true
-  }
+  "summary": {"can_proceed": true}
 }
 ```
 
-## Check Items
-
-| Check | Status Impact | Required For |
-|-------|---------------|--------------|
-| BBDown | ERROR if missing | All operations |
-| BBDown Auth | ERROR if not logged in | Video info, subtitle download |
-| ffmpeg | ERROR if missing | ASR transcription |
-| ANTHROPIC_API_KEY | WARNING if missing | Proofreading, summarization |
-| DASHSCOPE_API_KEY | WARNING if missing | ASR transcription |
-
-## Integration Pattern
-
-Parent skills should run preflight checks with `--check-json` and parse the result:
+## Parent Skill Handling
 
 ```python
-import subprocess
 import json
+import subprocess
 
 result = subprocess.run(
-    ["pixi", "run", "python", "-m", "bilibili_subtitle", "--check", "--check-json"],
+    ["pixi", "run", "python", "-m", "bilibili_subtitle", "--check-json"],
     capture_output=True,
     text=True,
 )
 report = json.loads(result.stdout)
-
 if not report["summary"]["can_proceed"]:
-    # Handle fatal errors
-    for check in report["checks"]:
-        if check["status"] == "error":
-            print(f"Fatal: {check['name']} - {check['remediation']}")
-    exit(1)
-
-# Check for optional features
-has_asr = any(
-    c["name"] == "DASHSCOPE_API_KEY" and c["status"] == "ok"
-    for c in report["checks"]
-)
+    raise SystemExit(1)
 ```

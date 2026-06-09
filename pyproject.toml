@@ -1,22 +1,12 @@
 [project]
 name = "bilibili-subtitle"
-version = "0.1.0"
-description = "Extract Bilibili subtitles or transcribe audio to generate transcripts."
+version = "0.2.0"
+description = "Download Bilibili subtitles with BBDown and render transcripts."
 requires-python = ">=3.11"
-dependencies = [
-  "yt-dlp>=2025.1.15",
-]
+dependencies = []
 
 [project.optional-dependencies]
-claude = [
-  "anthropic>=0.45.0",
-]
-transcribe = [
-  "dashscope>=1.20.0",
-  "openai>=1.0.0",
-]
 dev = [
-  "jsonschema>=4.20.0",
   "pytest>=8.0.0",
 ]
 

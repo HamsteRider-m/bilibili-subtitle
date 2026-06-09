@@ -1,11 +1,11 @@
 [workspace]
 name = "bilibili-subtitle"
 version = "0.2.0"
-description = "Extract Bilibili subtitles or transcribe audio to generate transcripts."
+description = "Download Bilibili subtitles with BBDown and render transcripts."
 channels = ["conda-forge"]
 platforms = ["linux-64", "osx-arm64", "osx-64", "win-64"]
 
 [dependencies]
 python = "3.11.*"
 pip = "*"
-ffmpeg = "*"
+pytest = "*"

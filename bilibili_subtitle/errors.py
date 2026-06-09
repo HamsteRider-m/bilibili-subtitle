@@ -1,16 +1,11 @@
 """
-Error taxonomy with severity levels and remediation hints.
-
-Level 1: FATAL - Cannot proceed, requires user action
-Level 2: RECOVERABLE - Can continue with degraded functionality
-Level 3: WARNING - Non-critical, proceed with caution
+Error taxonomy for BBDown-only subtitle extraction.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Literal
 
 
 class ErrorLevel(Enum):
@@ -65,9 +60,9 @@ class BBDownNotFoundError(SkillError):
             level=ErrorLevel.FATAL,
             message="BBDown not found in PATH",
             remediation=Remediation(
-                hint="Install BBDown from GitHub releases",
+                hint="Install BBDown from GitHub nightly builds",
                 command="./install.sh",
-                doc_url="https://github.com/nilaoda/BBDown/releases",
+                doc_url="https://github.com/nilaoda/BBDown",
             ),
         )
 
@@ -79,7 +74,7 @@ class BBDownAuthError(SkillError):
             level=ErrorLevel.FATAL,
             message=f"BBDown authentication required{': ' + details if details else ''}",
             remediation=Remediation(
-                hint="Login to Bilibili via BBDown",
+                hint="Login to Bilibili with BBDown",
                 command="BBDown login",
             ),
         )
@@ -90,60 +85,23 @@ class BBDownDownloadError(SkillError):
         super().__init__(
             code="E003",
             level=ErrorLevel.RECOVERABLE,
-            message=f"Failed to download: {url}{': ' + reason if reason else ''}",
+            message=f"Failed to download subtitles: {url}{': ' + reason if reason else ''}",
             remediation=Remediation(
-                hint="Check URL validity or network connection",
+                hint="Check the URL, network, login status, or selected subtitle language",
+                command="BBDown login",
             ),
         )
 
 
 class NoSubtitleError(SkillError):
-    def __init__(self, video_id: str) -> None:
+    def __init__(self, video_id: str = "video") -> None:
         super().__init__(
             code="E004",
             level=ErrorLevel.RECOVERABLE,
-            message=f"Video {video_id} has no subtitles",
+            message=f"{video_id} has no downloadable subtitles",
             remediation=Remediation(
-                hint="ASR transcription will be attempted if DASHSCOPE_API_KEY is set",
-            ),
-        )
-
-
-class ASRConfigError(SkillError):
-    def __init__(self) -> None:
-        super().__init__(
-            code="E005",
-            level=ErrorLevel.FATAL,
-            message="DASHSCOPE_API_KEY not configured",
-            remediation=Remediation(
-                hint="Set DASHSCOPE_API_KEY for ASR transcription",
-                command='export DASHSCOPE_API_KEY="your-key"',
-            ),
-        )
-
-
-class AnthropicConfigError(SkillError):
-    def __init__(self, feature: str = "proofreading") -> None:
-        super().__init__(
-            code="E006",
-            level=ErrorLevel.RECOVERABLE,
-            message=f"ANTHROPIC_API_KEY not configured, {feature} skipped",
-            remediation=Remediation(
-                hint="Set ANTHROPIC_API_KEY or use --skip-proofread --skip-summary",
-                command='export ANTHROPIC_API_KEY="your-key"',
-            ),
-        )
-
-
-class FFmpegNotFoundError(SkillError):
-    def __init__(self) -> None:
-        super().__init__(
-            code="E007",
-            level=ErrorLevel.FATAL,
-            message="ffmpeg not found",
-            remediation=Remediation(
-                hint="ffmpeg is required for audio conversion",
-                command="pixi install",
+                hint="Try another language or confirm the video has Bilibili subtitles",
+                command="pixi run python -m bilibili_subtitle <URL> --language zh-Hans",
             ),
         )
 
@@ -151,11 +109,11 @@ class FFmpegNotFoundError(SkillError):
 class InvalidURLError(SkillError):
     def __init__(self, url: str) -> None:
         super().__init__(
-            code="E008",
+            code="E005",
             level=ErrorLevel.FATAL,
-            message=f"Invalid Bilibili URL or BV ID: {url}",
+            message=f"Invalid Bilibili URL or ID: {url}",
             remediation=Remediation(
-                hint="Provide a valid URL (e.g., https://www.bilibili.com/video/BVxxx) or BV ID",
+                hint="Provide a bilibili.com URL, BV ID, or av ID",
             ),
         )
 
@@ -163,54 +121,30 @@ class InvalidURLError(SkillError):
 class OutputWriteError(SkillError):
     def __init__(self, path: str, reason: str = "") -> None:
         super().__init__(
-            code="E009",
+            code="E006",
             level=ErrorLevel.FATAL,
-            message=f"Cannot write to {path}{': ' + reason if reason else ''}",
+            message=f"Cannot write output to {path}{': ' + reason if reason else ''}",
             remediation=Remediation(
-                hint="Check directory permissions or use -o to specify a different output directory",
-            ),
-        )
-
-
-class VideoNotFoundError(SkillError):
-    def __init__(self, video_id: str) -> None:
-        super().__init__(
-            code="E010",
-            level=ErrorLevel.FATAL,
-            message=f"Video not found or unavailable: {video_id}",
-            remediation=Remediation(
-                hint="The video may be deleted, private, or region-restricted",
-            ),
-        )
-
-
-class RateLimitError(SkillError):
-    def __init__(self, retry_after: int = 60) -> None:
-        super().__init__(
-            code="E011",
-            level=ErrorLevel.RECOVERABLE,
-            message=f"Rate limited, retry after {retry_after}s",
-            remediation=Remediation(
-                hint="Wait and retry, or reduce request frequency",
+                hint="Check that the output directory exists and is writable",
             ),
         )
 
 
 class SubtitleContentError(SkillError):
-    def __init__(self, reason: str = "empty segments") -> None:
+    def __init__(self, reason: str = "") -> None:
         super().__init__(
-            code="E012",
+            code="E007",
             level=ErrorLevel.RECOVERABLE,
-            message=f"Subtitle content issue: {reason}",
+            message=f"Downloaded subtitle content is invalid{': ' + reason if reason else ''}",
             remediation=Remediation(
-                hint="Retry download or try a different subtitle language",
+                hint="Retry the download or inspect the subtitle file produced by BBDown",
             ),
         )
 
 
 def exit_code_for_error(error: SkillError) -> int:
-    return {
-        ErrorLevel.FATAL: 1,
-        ErrorLevel.RECOVERABLE: 2,
-        ErrorLevel.WARNING: 0,
-    }[error.level]
+    if error.level == ErrorLevel.FATAL:
+        return 1
+    if error.level == ErrorLevel.RECOVERABLE:
+        return 2
+    return 0

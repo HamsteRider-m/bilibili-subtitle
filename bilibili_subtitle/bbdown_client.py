@@ -211,29 +211,3 @@ class BBDownClient:
             has_ai_subtitle=has_ai_subtitle,
             languages=languages,
         )
-
-    def download_audio(self, url: str, work_dir: Path) -> Path:
-        work_dir.mkdir(parents=True, exist_ok=True)
-        video_id = self._extract_video_id(url)
-
-        args = self._base_args() + [
-            "--audio-only",
-            "-F",
-            video_id,
-            "--work-dir",
-            str(work_dir),
-            url,
-        ]
-        self._run(args)
-
-        audio_files = list(work_dir.glob(f"{video_id}.*"))
-        audio_exts = (".m4a", ".aac", ".mp3", ".flac", ".wav")
-        for f in audio_files:
-            if f.suffix.lower() in audio_exts:
-                return f
-
-        all_audio = [f for f in work_dir.iterdir() if f.suffix.lower() in audio_exts]
-        if all_audio:
-            return sorted(all_audio, key=lambda p: p.stat().st_mtime, reverse=True)[0]
-
-        raise BBDownError("Audio download produced no output.")

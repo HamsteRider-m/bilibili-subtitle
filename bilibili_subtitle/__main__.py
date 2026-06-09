@@ -1,350 +1,224 @@
 """
-CLI entry point for bilibili-subtitle skill.
+CLI entry point for bilibili-subtitle.
 
 Usage:
     pixi run python -m bilibili_subtitle "BV1234567890"
     pixi run python -m bilibili_subtitle --check
-    pixi run python -m bilibili_subtitle "URL" --skip-proofread --skip-summary
+    pixi run python -m bilibili_subtitle "URL" --language zh-Hans -o ./output
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
+from typing import Any
 
-import re
-
+from .bbdown_client import BBDownClient, BBDownError
 from .contract import ExitCode, ExecutionResult, SubtitleOutput
 from .errors import (
-    ASRConfigError,
-    BBDownAuthError,
-    BBDownDownloadError,
-    FFmpegNotFoundError,
     InvalidURLError,
     NoSubtitleError,
+    OutputWriteError,
     SkillError,
-    VideoNotFoundError,
+    SubtitleContentError,
     exit_code_for_error,
 )
 from .preflight import run_preflight
+from .renderers.markdown import render_transcript_markdown
+from .renderers.srt import render_srt
+from .renderers.vtt import render_vtt
+from .subtitle_loader import load_segments_from_subtitle_file
 from .url_parser import parse_bilibili_ref
 
 
-_WINDOWS_ILLEGAL_RE = re.compile(r'[/\\:*?"<>|]')
-_CONTROL_CHAR_RE = re.compile(r'[\x00-\x1f]')
-
-
-def _sanitize_filename(name: str) -> str:
-    """Remove Windows-illegal characters and control chars from a filename."""
-    name = _CONTROL_CHAR_RE.sub("", name)
-    name = _WINDOWS_ILLEGAL_RE.sub("_", name)
-    name = name.strip().strip("_").strip()
-    return name or "untitled"
-
-
-def create_parser() -> argparse.ArgumentParser:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bilibili_subtitle",
-        description="Extract Bilibili subtitles with ASR fallback",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  %(prog)s "BV1234567890"
-  %(prog)s "https://www.bilibili.com/video/BV1234567890"
-  %(prog)s "BV1234567890" --skip-proofread --skip-summary
-  %(prog)s --check
-        """,
+        description="Extract Bilibili subtitles with BBDown and render SRT/VTT/Markdown outputs.",
     )
-
-    parser.add_argument("url", nargs="?", help="Bilibili URL or BV ID")
+    parser.add_argument("input", nargs="?", help="Bilibili URL, BV ID, or av ID")
+    parser.add_argument("-o", "--output-dir", default="./output", help="Output directory")
     parser.add_argument(
-        "-o", "--output-dir", default="./output", help="Output directory"
-    )
-    parser.add_argument("--output-lang", choices=["zh", "en", "zh+en"], default="zh")
-    parser.add_argument(
-        "--skip-proofread", action="store_true", help="Skip AI proofreading"
+        "--language",
+        default="zh-Hans",
+        help="BBDown subtitle language selector, for example zh-Hans, zh-Hant, en",
     )
     parser.add_argument(
-        "--skip-summary", action="store_true", help="Skip AI summarization"
+        "--json-output", action="store_true", help="Print machine-readable JSON result"
     )
-    parser.add_argument("--cache-dir", default="./.cache", help="Cache directory")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     parser.add_argument("--check", action="store_true", help="Run preflight checks")
-    parser.add_argument("--check-json", action="store_true", help="Preflight as JSON")
     parser.add_argument(
-        "--skip-auth-check", action="store_true", help="Skip auth check"
+        "--check-json", action="store_true", help="Output preflight checks as JSON"
     )
-    parser.add_argument("--json-output", action="store_true", help="Output as JSON")
-    parser.add_argument("--version", action="version", version="%(prog)s 0.2.0")
     return parser
 
 
-def run_extraction(
-    url: str,
-    output_dir: Path,
+def _safe_filename(value: str | None, fallback: str) -> str:
+    name = (value or fallback).strip() or fallback
+    name = re.sub(r'[\\/:*?"<>|]', "_", name)
+    name = re.sub(r"\s+", " ", name).strip()
+    return name[:120] or fallback
+
+
+def _write_outputs(
     *,
-    output_lang: str = "zh",
-    skip_proofread: bool = False,
-    skip_summary: bool = False,
-    cache_dir: Path = Path("./.cache"),
+    segments: list,
+    output_dir: Path,
+    basename: str,
+    title: str | None,
+) -> dict[str, Path]:
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise OutputWriteError(str(output_dir), str(exc)) from exc
+
+    files = {
+        "srt": output_dir / f"{basename}.srt",
+        "vtt": output_dir / f"{basename}.vtt",
+        "transcript": output_dir / f"{basename}.transcript.md",
+    }
+    try:
+        files["srt"].write_text(render_srt(segments), encoding="utf-8")
+        files["vtt"].write_text(render_vtt(segments), encoding="utf-8")
+        files["transcript"].write_text(
+            render_transcript_markdown(segments, title=title), encoding="utf-8"
+        )
+    except OSError as exc:
+        raise OutputWriteError(str(output_dir), str(exc)) from exc
+    return files
+
+
+def run_extraction(
+    url_or_id: str,
+    *,
+    output_dir: Path,
+    language: str = "zh-Hans",
     verbose: bool = False,
 ) -> ExecutionResult:
-    warnings: list[str] = []
-    errors: list[dict] = []
+    ref = parse_bilibili_ref(url_or_id)
+    if not ref.video_id:
+        raise InvalidURLError(url_or_id)
 
-    try:
-        ref = parse_bilibili_ref(url)
-        video_id = ref.video_id or "unknown"
-        canonical_url = ref.canonical_url or ref.input_value
-    except Exception:
-        raise InvalidURLError(url)
-
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    from .bbdown_client import BBDownClient
-    from .segment import Segment
-    from .subtitle_loader import load_segments_from_subtitle_file, check_title_relevance
-
+    url = ref.canonical_url or ref.input_value
     client = BBDownClient()
 
     if verbose:
-        print(f"[INFO] Processing: {video_id}")
-        print(f"[INFO] Output directory: {output_dir}")
+        print(f"📥 Downloading subtitles via BBDown: {url}", file=sys.stderr)
+    info = client.get_video_info(url, output_dir, lang=language)
+    if not info.subtitle_files:
+        raise NoSubtitleError(ref.video_id or "video")
 
-    try:
-        info = client.get_video_info(canonical_url, cache_dir)
-    except Exception as e:
-        if "login" in str(e).lower() or "auth" in str(e).lower():
-            raise BBDownAuthError(str(e))
-        if "not found" in str(e).lower() or "不存在" in str(e).lower():
-            raise VideoNotFoundError(video_id or "unknown")
-        raise BBDownDownloadError(canonical_url, str(e))
+    subtitle_file = sorted(info.subtitle_files, key=lambda path: path.suffix.lower())[0]
+    loaded = load_segments_from_subtitle_file(subtitle_file, title=info.title)
+    if not loaded.segments:
+        raise SubtitleContentError("parsed subtitle file contains no segments")
 
-    if verbose:
-        print(f"[INFO] Title: {info.title}")
-        print(f"[INFO] Has subtitle: {info.subtitle_info.has_subtitle}")
-
-    segments: list[Segment] = []
-
-    if info.subtitle_files:
-        max_crosstalk_retries = 2
-        for attempt in range(max_crosstalk_retries + 1):
-            sub_file = info.subtitle_files[0]
-            if verbose:
-                print(f"[INFO] Loading subtitle: {sub_file.name}")
-            load_result = load_segments_from_subtitle_file(sub_file, title=info.title)
-            segments = load_result.segments
-
-            if load_result.relevant:
-                break
-
-            # Crosstalk detected — subtitle may belong to a different video
-            if attempt < max_crosstalk_retries:
-                warnings.append(
-                    f"Crosstalk suspected (attempt {attempt + 1}), re-downloading..."
-                )
-                if verbose:
-                    print(f"[WARN] Subtitle may not match title, retrying ({attempt + 1}/{max_crosstalk_retries})")
-                # Delete stale file and re-fetch
-                sub_file.unlink(missing_ok=True)
-                try:
-                    info = client.get_video_info(canonical_url, cache_dir)
-                except Exception:
-                    break  # Can't retry, use what we have
-                if not info.subtitle_files:
-                    break
-            else:
-                warnings.append(
-                    "Subtitle content may not match video title (crosstalk); proceeding anyway"
-                )
-    elif not info.subtitle_info.has_subtitle:
-        warnings.append("No subtitles found, attempting ASR transcription")
-
-        import shutil
-
-        if not shutil.which("ffmpeg"):
-            raise FFmpegNotFoundError()
-
-        from .audio_extractor import extract_audio
-        from .agents.transcribe_agent import TranscribeAgent
-
-        try:
-            audio_path = extract_audio(canonical_url, cache_dir)
-            if verbose:
-                print(f"[INFO] Audio extracted: {audio_path}")
-
-            transcriber = TranscribeAgent(mode="qwen")
-            result = transcriber.transcribe(str(audio_path))
-            segments = result.segments
-
-            if audio_path.exists():
-                audio_path.unlink()
-        except Exception as e:
-            if "DASHSCOPE_API_KEY" in str(e):
-                raise ASRConfigError()
-            raise
-
-    if not segments:
-        raise NoSubtitleError(video_id)
-
-    if not skip_proofread:
-        import os
-
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            warnings.append("ANTHROPIC_API_KEY not set, skipping proofreading")
-        else:
-            if verbose:
-                print("[INFO] Proofreading...")
-            from .agents.proofread_agent import ProofreadAgent
-
-            proofer = ProofreadAgent()
-            try:
-                segments = proofer.proofread_segments(segments)
-            except Exception as e:
-                warnings.append(f"Proofreading failed: {e}")
-
-    from .renderers.srt import render_srt
-    from .renderers.vtt import render_vtt
-    from .renderers.markdown import render_transcript_markdown
-
-    srt_content = render_srt(segments)
-    vtt_content = render_vtt(segments)
-    md_content = render_transcript_markdown(segments, title=info.title)
-
-    lang_suffix = "" if output_lang == "zh" else f".{output_lang}"
-    safe_title = _sanitize_filename(info.title or video_id)
-    srt_path = output_dir / f"{safe_title}{lang_suffix}.srt"
-    vtt_path = output_dir / f"{safe_title}{lang_suffix}.vtt"
-    md_path = output_dir / f"{safe_title}.transcript.md"
-
-    srt_path.write_text(srt_content, encoding="utf-8")
-    vtt_path.write_text(vtt_content, encoding="utf-8")
-    md_path.write_text(md_content, encoding="utf-8")
-
-    if verbose:
-        print(f"[INFO] Generated: {srt_path.name}")
-        print(f"[INFO] Generated: {md_path.name}")
-
-    summary_json_path = None
-    summary_md_path = None
-
-    if not skip_summary:
-        import os
-
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            warnings.append("ANTHROPIC_API_KEY not set, skipping summarization")
-        else:
-            if verbose:
-                print("[INFO] Summarizing...")
-            from .agents.summarize_agent import SummarizeAgent
-
-            summarizer = SummarizeAgent()
-            try:
-                result = summarizer.summarize(segments, title=info.title)
-                summary_json_path = output_dir / f"{safe_title}.summary.json"
-                summary_md_path = output_dir / f"{safe_title}.summary.md"
-                summary_json_path.write_text(
-                    json.dumps(result.summary, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
-                )
-                summary_md_path.write_text(result.raw_text or "", encoding="utf-8")
-            except Exception as e:
-                warnings.append(f"Summarization failed: {e}")
-
-    output = SubtitleOutput(
-        video_id=video_id,
+    video_id = info.video_id or ref.video_id or "bilibili"
+    basename = _safe_filename(info.title, video_id)
+    files = _write_outputs(
+        segments=loaded.segments,
+        output_dir=output_dir,
+        basename=basename,
         title=info.title,
-        transcript_md=md_path,
-        srt_file=srt_path,
-        vtt_file=vtt_path,
-        summary_json=summary_json_path,
-        summary_md=summary_md_path,
     )
+
+    warnings: list[str] = []
+    if not loaded.relevant:
+        warnings.append("Subtitle content may not match the video title")
 
     return ExecutionResult(
-        exit_code=ExitCode.SUCCESS if not errors else ExitCode.PARTIAL_SUCCESS,
-        output=output,
-        errors=errors,
+        exit_code=ExitCode.SUCCESS,
+        output=SubtitleOutput(
+            video_id=video_id,
+            title=info.title,
+            transcript=files["transcript"],
+            srt=files["srt"],
+            vtt=files["vtt"],
+        ),
         warnings=warnings,
-        metadata={"url": canonical_url},
+        errors=[],
     )
 
 
-def main() -> int:
-    parser = create_parser()
-    args = parser.parse_args()
+def _print_json(payload: dict[str, Any]) -> None:
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
 
-    if args.check or args.check_json:
-        report = run_preflight(include_auth=not args.skip_auth_check)
-        if args.check_json:
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if args.check:
+        report = run_preflight()
+        if args.check_json or args.json_output:
             print(report.to_json())
         else:
             report.print_report()
+            print()
+            print("✅ Ready to proceed" if report.can_proceed else "❌ Fix errors before proceeding")
         return 0 if report.can_proceed else 1
 
-    if not args.url:
-        parser.error("URL is required (unless using --check)")
-
-    output_dir = Path(args.output_dir)
-    cache_dir = Path(args.cache_dir)
+    if not args.input:
+        parser.error("input is required unless --check is used")
 
     try:
         result = run_extraction(
-            args.url,
-            output_dir,
-            output_lang=args.output_lang,
-            skip_proofread=args.skip_proofread,
-            skip_summary=args.skip_summary,
-            cache_dir=cache_dir,
+            args.input,
+            output_dir=Path(args.output_dir),
+            language=args.language,
             verbose=args.verbose,
         )
-
+    except BBDownError as exc:
+        error = NoSubtitleError() if "no subtitle" in str(exc).lower() else None
         if args.json_output:
-            print(result.to_json())
-        else:
-            if result.output:
-                print(
-                    f"✅ {result.output.video_id}: {result.output.title or 'No title'}"
-                )
-                if result.output.transcript_md:
-                    print(f"   Transcript: {result.output.transcript_md}")
-            for w in result.warnings:
-                print(f"⚠️  {w}")
-
-        return result.exit_code.value
-
-    except SkillError as e:
-        if args.json_output:
-            print(
-                json.dumps(
-                    {
-                        "exit_code": exit_code_for_error(e),
-                        "error": e.to_json(),
+            _print_json(
+                {
+                    "exit_code": 1,
+                    "success": False,
+                    "error": {
+                        "code": error.code if error else "E003",
+                        "message": str(exc),
                     },
-                    indent=2,
-                )
+                }
             )
         else:
-            print(str(e), file=sys.stderr)
-        return exit_code_for_error(e)
-
-    except Exception as e:
-        if args.json_output:
-            print(
-                json.dumps(
-                    {
-                        "exit_code": 1,
-                        "error": {"code": "E999", "message": str(e)},
-                    },
-                    indent=2,
-                )
-            )
-        else:
-            print(f"❌ Unexpected error: {e}", file=sys.stderr)
+            print(f"❌ BBDown error: {exc}", file=sys.stderr)
         return 1
+    except SkillError as exc:
+        code = exit_code_for_error(exc)
+        if args.json_output:
+            _print_json({"exit_code": code, "success": False, "error": exc.to_json()})
+        else:
+            print(f"❌ {exc}", file=sys.stderr)
+        return code
+    except Exception as exc:  # pragma: no cover - last-resort CLI guard
+        if args.json_output:
+            _print_json(
+                {
+                    "exit_code": 1,
+                    "success": False,
+                    "error": {"code": "E999", "message": str(exc)},
+                }
+            )
+        else:
+            print(f"❌ Unexpected error: {exc}", file=sys.stderr)
+        return 1
+
+    if args.json_output:
+        _print_json(result.to_json())
+    else:
+        print("✅ Subtitles extracted")
+        if result.output:
+            print(f"📄 Transcript: {result.output.transcript}")
+            print(f"🎬 SRT: {result.output.srt}")
+            print(f"🎬 VTT: {result.output.vtt}")
+        for warning in result.warnings:
+            print(f"⚠️  {warning}")
+    return result.exit_code.value
 
 
 if __name__ == "__main__":

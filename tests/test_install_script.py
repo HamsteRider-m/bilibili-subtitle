@@ -64,8 +64,6 @@ def test_requires_gh_when_missing():
     with tempfile.TemporaryDirectory() as tmpdir:
         fake_bin = Path(tmpdir) / "bin"
         fake_bin.mkdir()
-        # provide ffmpeg stub so script doesn't fail on that check
-        _make_fake_bin(fake_bin, "ffmpeg", 'echo "ffmpeg version 6.0"')
 
         env = _base_env(str(fake_bin))
         env["BBDOWN_OS"] = "Linux"
@@ -165,7 +163,6 @@ def test_gh_run_list_empty_exits():
         fake_bin.mkdir()
         # fake gh that returns empty for run list
         _make_fake_bin(fake_bin, "gh", 'echo ""')
-        _make_fake_bin(fake_bin, "ffmpeg", 'echo "ffmpeg version 6.0"')
 
         env = _base_env(str(fake_bin))
         env["BBDOWN_OS"] = "Linux"
@@ -192,7 +189,6 @@ def test_gh_download_failure_exits():
             'if echo "$@" | grep -q "run list"; then echo 12345; '
             'else exit 1; fi',
         )
-        _make_fake_bin(fake_bin, "ffmpeg", 'echo "ffmpeg version 6.0"')
 
         env = _base_env(str(fake_bin))
         env["BBDOWN_OS"] = "Linux"
@@ -222,17 +218,15 @@ def test_same_checksum_shows_up_to_date():
         existing.chmod(0o755)
 
         # fake gh: run list → ID, run download → copy same binary
-        dl_dir_holder = [None]
         gh_body = (
             'if echo "$@" | grep -q "run list"; then echo 99999; '
             'elif echo "$@" | grep -q "run download"; then '
-            '  DEST=$(echo "$@" | grep -oP "(?<=-D )\\S+"); '
+            '  while [ "$#" -gt 0 ]; do if [ "$1" = "-D" ]; then shift; DEST="$1"; break; fi; shift; done; '
             '  mkdir -p "$DEST"; '
             f'  cp {existing} "$DEST/BBDown"; '
             'fi'
         )
         _make_fake_bin(fake_bin, "gh", gh_body)
-        _make_fake_bin(fake_bin, "ffmpeg", 'echo "ffmpeg version 6.0"')
 
         env = _base_env(str(fake_bin))
         env["BBDOWN_OS"] = "Linux"
@@ -261,13 +255,12 @@ def test_different_checksum_shows_updated():
         gh_body = (
             'if echo "$@" | grep -q "run list"; then echo 99999; '
             'elif echo "$@" | grep -q "run download"; then '
-            '  DEST=$(echo "$@" | grep -oP "(?<=-D )\\S+"); '
+            '  while [ "$#" -gt 0 ]; do if [ "$1" = "-D" ]; then shift; DEST="$1"; break; fi; shift; done; '
             '  mkdir -p "$DEST"; '
             '  echo "NEW_BINARY_V2" > "$DEST/BBDown"; '
             'fi'
         )
         _make_fake_bin(fake_bin, "gh", gh_body)
-        _make_fake_bin(fake_bin, "ffmpeg", 'echo "ffmpeg version 6.0"')
 
         env = _base_env(str(fake_bin))
         env["BBDOWN_OS"] = "Linux"
@@ -295,13 +288,12 @@ def test_fresh_install_shows_installed():
         gh_body = (
             'if echo "$@" | grep -q "run list"; then echo 99999; '
             'elif echo "$@" | grep -q "run download"; then '
-            '  DEST=$(echo "$@" | grep -oP "(?<=-D )\\S+"); '
+            '  while [ "$#" -gt 0 ]; do if [ "$1" = "-D" ]; then shift; DEST="$1"; break; fi; shift; done; '
             '  mkdir -p "$DEST"; '
             '  echo "NEW_BINARY" > "$DEST/BBDown"; '
             'fi'
         )
         _make_fake_bin(fake_bin, "gh", gh_body)
-        _make_fake_bin(fake_bin, "ffmpeg", 'echo "ffmpeg version 6.0"')
 
         env = _base_env(str(fake_bin))
         env["BBDOWN_OS"] = "Linux"
