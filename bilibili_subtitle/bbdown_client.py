@@ -135,15 +135,12 @@ class BBDownClient:
 
         args = self._base_args() + [
             "--sub-only",
-            "--skip-ai",
-            "false",
+            "--skip-ai=false",
             "-F",
             video_id,
             "--work-dir",
             str(work_dir),
         ]
-        if lang is not None:
-            args += ["--select-lang", lang]
         args.append(url)
 
         result = self._run(args, check=False)
